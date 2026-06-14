@@ -1,44 +1,34 @@
 # IV Mean-Reversion Profiler
 
-A research tool that builds a **volatility "personality" profile** for every stock in a
-watchlist, using one year of daily implied- and historical-volatility from Interactive
-Brokers, and maps each name to the options strategy its vol behaviour actually supports.
+A research toolkit that builds a **volatility "personality" profile** for every stock in a
+universe (up to the full S&P 500) from 1–2 years of daily implied- and historical-volatility
+(Interactive Brokers), and maps each name to the options strategy its vol behaviour supports.
 
 The premise: *implied volatility mean-reverts, but every name reverts differently.* Some
-stocks have **sticky** vol that re-elevates after every earnings crush (good for
-calendars); others have vol that **evaporates within days** (good for selling credit
-spreads); a few are **structurally cheap** (the only place buying premium has an edge).
-A single IV-percentile number can't tell these apart — this tool measures the dynamics.
+stocks have **sticky** vol that re-elevates after every earnings crush (good for calendars);
+others have vol that **evaporates within days** (good for selling credit spreads); a few are
+**structurally cheap** (the only place buying premium has an edge). A single IV-percentile
+number can't tell these apart — this tool measures the dynamics, then **validates whether the
+apparent edge survives out-of-sample.**
 
-> ⚠️ **Research / educational only. Not investment advice.** The code *reads* market data
-> and never places orders. Findings are estimated on one year of data and are sensitive to
-> regime; see [Limitations](#limitations).
+> ⚠️ **Research / educational only. Not investment advice.** The code *reads* market data and
+> never places orders. See [Findings & limitations](#findings--what-actually-held-up) — several
+> "edges" measurably weaken out-of-sample, and that's reported honestly.
 
-## What it computes per ticker
+## Architecture
 
-| Metric | Meaning |
-| --- | --- |
-| `iv_pctile`, `z_score` | Where current IV sits in its own 1-year range (rank and magnitude) |
-| `phi` | AR(1) persistence of IV — *stickiness*. Near 1.0 ⇒ shocks decay slowly |
-| `half_life_days` | Trading days for an IV shock to decay by half (`ln 0.5 / ln φ`) |
-| `n_crush`, `avg_d1_crush_pct` | Earnings-style 1-day IV crushes detected, and average day-1 drop off the peak |
-| `recovery_vs_peak`, `recovery_vs_base` | Where IV sits 20 days post-crush, vs the peak and vs the pre-event baseline |
-| `iv_hv_avg` | 1-year mean IV ÷ mean HV — the **variance risk premium**. >1.15 = options genuinely rich; <0.90 = stock realizes more than options price |
-| `group`, `strategy`, `vrp` | Strategy bucket + plain-English play + whether the edge is real |
+Data acquisition is separated from analysis so a 500-name run is feasible and reproducible:
 
-## Strategy groups
+```
+ivdata.py        ── fetch IV+HV once, cache to data_cache/<SYM>.json   (slow, resumable)
+   │
+   ├── iv_behavior.py     profile + strategy group + HAR forecast      (per-name table)
+   ├── har_forecast.py    walk-forward AR(1) vs log-AR(1) vs HAR        (model comparison)
+   ├── vrp_calibration.py calibrated P(selling vol wins) + validation   (does the edge hold?)
+   └── correlation.py     cross-name IV correlation / systemic risk
+```
 
-| Group | Condition | Play |
-| --- | --- | --- |
-| **G1** Calendar specialist | IV rich & `phi ≥ 0.99` (sticky) | Calendar spread **after** the earnings crush — the long back-month leg holds its vega while the front decays |
-| **G2** Credit spread, slow | IV rich & half-life > 30d | Bear/bull credit spread, 30–45 DTE, held to expiry |
-| **G3** Credit spread, fast | IV rich & half-life ≤ 30d | Credit spread, 30–45 DTE, take profit early — vol deflates fast |
-| **G4** Long premium | IV ≤ 30th percentile | Straddle/strangle **with a catalyst inside the tenor**; exit into the pre-event IV ramp |
-| **G5** No edge | mid-range IV | Iron condor in a quiet window, or skip |
-
-The variance-risk-premium check (`iv_hv_avg`) is layered on top: a high IV percentile only
-implies a *real* selling edge when options are also priced above realized vol. In a trending
-universe, high IV often just means the stock genuinely moves a lot — `vrp` flags that.
+Analysis scripts read the cache — **no IBKR connection needed** once data is fetched.
 
 ## Quick start
 
@@ -47,79 +37,96 @@ git clone https://github.com/Digantdc/iv-mean-reversion.git
 cd iv-mean-reversion
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env            # edit host/port for your IB Gateway or TWS
+cp .env.example .env                      # point at your IB Gateway / TWS
 
-# IB Gateway / TWS must be running with the API enabled
-python iv_behavior.py --tickers tickers.example.txt --out results.csv
+# 1. fetch & cache (IB Gateway must be running; ~3 min for ai_semi, ~3 h for sp500)
+python ivdata.py --universe ai_semi       # or: --universe sp500
+# 2. analyse (offline, instant, reproducible)
+python iv_behavior.py   --from-cache --universe ai_semi --out results.csv
+python har_forecast.py  --universe ai_semi
+python vrp_calibration.py --universe ai_semi
+python correlation.py   --universe ai_semi
 ```
 
-Output is a CSV with one row per ticker plus a printed group census, e.g.:
+## What it computes per ticker
 
-```
-Done: 32/34 profiled -> results.csv
-Group census: G1 3 | G2 0 | G3 13 | G4 3 | G5 13
-```
+| Metric | Meaning |
+| --- | --- |
+| `iv_pctile`, `z_score` | Where current IV sits in its 1y range (rank and magnitude) |
+| `phi`, `phi_log` | AR(1) persistence of IV in levels and in logs — *stickiness* |
+| `half_life_days` | Trading days for an IV shock to decay by half |
+| `e_iv_20d`, `har_improve_pct` | HAR-model IV forecast, and its OOS RMSE improvement vs AR(1) |
+| `n_crush`, `avg_d1_crush_pct`, `recovery_vs_peak/base` | Earnings-crush statistics |
+| `iv_hv_avg` | 1y mean IV ÷ mean HV — the **variance risk premium** |
+| `group`, `strategy`, `vrp` | Strategy bucket + plain-English play + is the edge real |
 
-## Sample output
+### Strategy groups
 
-Running the bundled `tickers.example.txt` (34 large-cap AI / semiconductor names) produced
-[`sample_output.csv`](sample_output.csv). Group census:
+| Group | Condition | Play |
+| --- | --- | --- |
+| **G1** Calendar | IV rich & `phi ≥ 0.99` (sticky) | Calendar **after** the earnings crush |
+| **G2** Credit, slow | IV rich & half-life > 30d | Credit spread 30–45 DTE, hold to expiry |
+| **G3** Credit, fast | IV rich & half-life ≤ 30d | Credit spread 30–45 DTE, take profit early |
+| **G4** Long premium | IV ≤ 30th pct | Straddle/strangle with a catalyst in the tenor |
+| **G5** No edge | mid-range IV | Iron condor in a quiet window, or skip |
 
-```
-Group census: G1 3 | G2 4 | G3 13 | G4 3 | G5 11
-```
+## Methodology
 
-One representative name per group (all figures market-derived, 1-year IBKR data):
+* **Three vol models** (`volmodels.py`): AR(1) on levels, AR(1) on log-vol (proportional
+  shocks), and **HAR** (Corsi 2009 — daily + weekly + monthly memory). `walk_forward_rmse()`
+  compares their *genuine out-of-sample* 1-day-ahead forecast error on an expanding window
+  against a random-walk benchmark.
+* **Feature engineering** (`features.py`): IV percentile/z-score, IV/HV ratio (now & 1y avg),
+  IV slope, HV percentile, phi, half-life → with a forward label `sell_vol_win = 1[HV_{t+20} < IV_t]`
+  (did selling vol actually pay).
+* **Probability calibration** (`vrp_calibration.py`): gradient boosting on the pooled features
+  with a **per-ticker out-of-time split** (most-recent slice of each name held out — no
+  look-ahead), isotonic recalibration, and the metrics that matter for a probability model:
+  Brier (vs base-rate benchmark), ROC AUC, and a reliability table/plot.
+* **Correlation** (`correlation.py`): average pairwise correlation of daily IV log-changes —
+  rising correlation = diversification failing = systemic-stress build-up.
 
-| Symbol | Group | IV | IV %ile | phi | half-life | IV/HV (1y) | Read |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| MU | **G1** | 1.06 | 100 | 0.994 | 112d | 1.02 | Sticky vol → calendar after the earnings crush |
-| AMAT | **G2** | 0.73 | 100 | 0.989 | 61d | 1.16 | Rich + slow decay → 30-45 DTE credit spread (real selling edge, IV/HV>1.15) |
-| TSM | **G3** | 0.46 | 92 | 0.951 | 14d | 1.04 | Rich + fast decay → credit spread, take profit early |
-| AMD | **G4-ish** | 0.72 | 99 | 0.963 | 18d | **0.86** | High percentile but options priced *below* realized vol → a buying tell, not a selling one |
-| AAPL | **G4** | 0.23 | 22 | 0.911 | 7d | 1.06 | Cheap vol → long premium with a catalyst in the tenor |
-| NVDA | **G5** | 0.37 | 37 | 0.934 | 10d | 1.14 | Mid-range → no clear vol edge |
+## Findings — what actually held up
 
-The AMD row shows why the variance-risk-premium check matters: a 99th-percentile IV looks
-like a screaming sell, but `iv_hv_avg = 0.86` means the stock has been realizing *more*
-volatility than its options price — the opposite signal. Percentile alone would mislead here.
+Run on a 34-name AI/semiconductor universe (2y data). These are **deliberately honest**,
+including the parts that didn't work:
 
-> Numbers are a snapshot from one run and will differ as markets move. Regenerate any time
-> with `python iv_behavior.py --tickers tickers.example.txt --out sample_output.csv`.
+**1. HAR ≈ AR(1) ≈ random walk at the 1-day horizon.** HAR improved OOS RMSE on only ~21% of
+names (mean −0.4%). Why: IBKR's `OPTION_IMPLIED_VOLATILITY` is already a 30-day smoothed index,
+so its persistence is near-unit-root and the monthly HAR term is nearly collinear with the
+level. HAR's documented edge appears at **multi-day horizons and on raw realized vol** — the
+code measures this rather than assuming it. *Building the model and reporting that it didn't
+beat the baseline here is the point.*
 
-## Method notes
+**2. The variance-risk-premium signal is weak out-of-sample.** In-sample / naive-split the
+model looked predictive (AUC ≈ 0.64); under a **proper per-ticker out-of-time split it falls to
+AUC ≈ 0.56** with Brier no better than the base rate. The IV/HV ratio is consistently the
+**top feature by importance** — validating the thesis that IV-vs-realized matters more than
+IV percentile — but its standalone forward edge is marginal and regime-dependent. This is the
+single most useful result: *the apparent edge mostly does not survive honest validation.*
 
-* **Data source:** IBKR `OPTION_IMPLIED_VOLATILITY` and `HISTORICAL_VOLATILITY` daily bars
-  (a 30-day ATM-interpolated IV index, not a single option's IV). Delayed data is sufficient.
-* **AR(1)** is the discrete-time Ornstein–Uhlenbeck process at the core of the Heston model —
-  the simplest interpretable mean-reversion estimator. `phi` is the OLS slope of `IV_t` on `IV_{t-1}`.
-* **Crush detection** is heuristic: a >15% relative *and* >5 vol-point single-day IV drop, after a
-  45-day warm-up so a pre-event baseline exists. Events are not cross-checked against earnings dates.
-* **Rate limiting:** IBKR allows ~60 historical requests per 10 minutes; the script paces itself
-  (`--pace-every` / `--pace-sleep`) so large universes complete without throttling.
+**3. Cross-name IV correlation is the cleaner signal.** Average pairwise IV-change correlation
+was ~0.27, rising to ~0.29 over the recent 60 days; semicap/foundry names (TSM, LRCX, KLAC,
+AMAT, NVDA) are the most "systemic" (highest average correlation to the rest) — consistent with
+shocks propagating through the AI supply chain together.
+
+See [`sample_output.csv`](sample_output.csv) and [`har_comparison.csv`](har_comparison.csv).
 
 ## Limitations
 
-Read these before trusting any output:
-
-* **One year, one regime.** `phi` near 1.0 is biased upward in small samples; `half_life` is
-  imprecise (the gap between φ=0.99 and 0.995 doubles it). Treat rankings as meaningful at the
-  extremes, noisy in the middle.
-* **AR(1) on levels** is the bluntest model — log-vol AR(1) (proportional shocks) and
-  [HAR](https://en.wikipedia.org/wiki/Heterogeneous_autoregressive_model) (multi-horizon) both
-  forecast vol better. A natural next step.
-* **In-sample, no costs.** Strategy labels are descriptive, not a backtest. Real edge requires
-  out-of-sample testing net of commissions and bid/ask, plus probability calibration.
-* **IV mean-reversion ≠ profit.** A credit spread's P&L is mostly realized path + theta; the
-  documented options-selling edge is the *variance risk premium* (IV > subsequent realized vol),
-  which is why `iv_hv_avg` is included as a reality check.
+* **1–2 years, one regime.** `phi` near 1.0 is upward-biased in small samples; half-life is
+  imprecise. Rankings are meaningful at the extremes, noisy in the middle.
+* **In-sample strategy labels.** The G1–G5 groups are descriptive; the calibration module is
+  the part that actually tests forward edge — and finds it weak.
+* **30-day IV index, not per-option IV.** No skew or term structure; no transaction costs.
+* **IV mean-reversion ≠ profit.** Confirmed empirically here — hence the emphasis on validation.
 
 ## Roadmap
 
-- [ ] log-vol AR(1) and HAR forecasts
+- [ ] multi-day-horizon HAR + HAR on raw realized vol (where it should beat AR(1))
 - [ ] earnings-date alignment for clean crush windows (vs heuristic detection)
-- [ ] per-tenor term structure instead of the 30-day IV index
-- [ ] walk-forward strategy backtest with transaction costs and calibrated probabilities
+- [ ] per-tenor term-structure features; transaction-cost-aware strategy backtest
+- [ ] regime-conditioned models (the OOS degradation is largely a regime-shift problem)
 
 ## License
 

@@ -1,1 +1,9 @@
+# Core analysis (offline, reads data_cache/)
+numpy>=1.24
+scikit-learn>=1.3
+
+# Data acquisition only (live IBKR fetch via ivdata.py / iv_behavior.py live mode)
 ib_async>=2.0.0
+
+# Optional: reliability plot in vrp_calibration.py
+matplotlib>=3.6

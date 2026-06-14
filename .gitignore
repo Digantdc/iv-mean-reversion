@@ -1,11 +1,14 @@
 .env
 results.csv
-*.csv
 __pycache__/
 *.pyc
 venv/
 .venv/
 .DS_Store
 
-# but DO track the committed sample
+# local regenerable cache (500 JSON files) — not committed
+data_cache/
+
+# committed sample artifacts (exceptions to broad ignores)
 !sample_output.csv
+!har_comparison.csv
