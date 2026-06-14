@@ -6,3 +6,6 @@ __pycache__/
 venv/
 .venv/
 .DS_Store
+
+# but DO track the committed sample
+!sample_output.csv

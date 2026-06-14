@@ -60,6 +60,33 @@ Done: 32/34 profiled -> results.csv
 Group census: G1 3 | G2 0 | G3 13 | G4 3 | G5 13
 ```
 
+## Sample output
+
+Running the bundled `tickers.example.txt` (34 large-cap AI / semiconductor names) produced
+[`sample_output.csv`](sample_output.csv). Group census:
+
+```
+Group census: G1 3 | G2 4 | G3 13 | G4 3 | G5 11
+```
+
+One representative name per group (all figures market-derived, 1-year IBKR data):
+
+| Symbol | Group | IV | IV %ile | phi | half-life | IV/HV (1y) | Read |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| MU | **G1** | 1.06 | 100 | 0.994 | 112d | 1.02 | Sticky vol → calendar after the earnings crush |
+| AMAT | **G2** | 0.73 | 100 | 0.989 | 61d | 1.16 | Rich + slow decay → 30-45 DTE credit spread (real selling edge, IV/HV>1.15) |
+| TSM | **G3** | 0.46 | 92 | 0.951 | 14d | 1.04 | Rich + fast decay → credit spread, take profit early |
+| AMD | **G4-ish** | 0.72 | 99 | 0.963 | 18d | **0.86** | High percentile but options priced *below* realized vol → a buying tell, not a selling one |
+| AAPL | **G4** | 0.23 | 22 | 0.911 | 7d | 1.06 | Cheap vol → long premium with a catalyst in the tenor |
+| NVDA | **G5** | 0.37 | 37 | 0.934 | 10d | 1.14 | Mid-range → no clear vol edge |
+
+The AMD row shows why the variance-risk-premium check matters: a 99th-percentile IV looks
+like a screaming sell, but `iv_hv_avg = 0.86` means the stock has been realizing *more*
+volatility than its options price — the opposite signal. Percentile alone would mislead here.
+
+> Numbers are a snapshot from one run and will differ as markets move. Regenerate any time
+> with `python iv_behavior.py --tickers tickers.example.txt --out sample_output.csv`.
+
 ## Method notes
 
 * **Data source:** IBKR `OPTION_IMPLIED_VOLATILITY` and `HISTORICAL_VOLATILITY` daily bars
