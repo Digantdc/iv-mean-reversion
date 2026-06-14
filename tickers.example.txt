@@ -1,0 +1,8 @@
+# Example ticker universe (AI / semiconductor supply chain). Edit freely.
+# One symbol per line or comma-separated; text after # is ignored.
+NVDA, AMD, AVGO, MRVL, QCOM, ARM
+TSM, ASML, AMAT, LRCX, KLAC, TER
+MU, INTC, GFS, TXN, ADI, ON
+ORCL, PLTR, SNOW, NOW, CRM, MSFT
+AAPL, AMZN, GOOGL, META, TSLA
+SMCI, DELL, ANET, VRT, CRWV
