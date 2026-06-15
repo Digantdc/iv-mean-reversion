@@ -12,3 +12,4 @@ data_cache/
 # committed sample artifacts (exceptions to broad ignores)
 !sample_output.csv
 !har_comparison.csv
+!strategy_backtest.csv

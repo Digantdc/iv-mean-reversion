@@ -105,7 +105,25 @@ AUC ≈ 0.56** with Brier no better than the base rate. The IV/HV ratio is consi
 IV percentile — but its standalone forward edge is marginal and regime-dependent. This is the
 single most useful result: *the apparent edge mostly does not survive honest validation.*
 
-**3. Cross-name IV correlation is the cleaner signal.** Average pairwise IV-change correlation
+**3. Strategy backtest — the result that actually answers the goal** (`strategy_backtest.py`).
+Simulating the real structures on 2y of price+IV history (rolling 30-day trades) reverses the
+reflexive "sell high IV" lean:
+
+| Strategy | mean return/trade | win rate | verdict |
+| --- | --- | --- | --- |
+| long straddle (buy vol) | **+0.16** | 0.45 | positive: lose small often, win big — these names realised more than they implied |
+| iron condor (sell vol) | **−0.05** | 0.71 | **negative despite 71% win rate** — the 29% losses dwarf the wins in a trending market |
+| calendar | +0.06 | 0.46 | positive on pin-prone / sticky-vol names |
+
+Best strategy by name: **19 → long straddle, 15 → calendar, 0 → iron condor.** Calendars won
+on the lower-octane / sticky-semicap names (NVDA, AAPL, TSM, QCOM, KLAC — validating the G1
+thesis with real P&L); long premium won on the high-octane names whose IV under-priced their
+moves (MU, AMD, ASML, AMAT, MRVL). *Selling defined-risk premium was nobody's best strategy here.*
+**Heavily regime-conditioned** (2024-26 AI bull + two crashes is the ideal regime for long
+gamma) and **pre-cost** — but the direction is the point: in this universe, IV/HV < 1 meant
+buying vol beat selling it. See [`strategy_backtest.csv`](strategy_backtest.csv).
+
+**4. Cross-name IV correlation is the cleaner signal.** Average pairwise IV-change correlation
 was ~0.27, rising to ~0.29 over the recent 60 days; semicap/foundry names (TSM, LRCX, KLAC,
 AMAT, NVDA) are the most "systemic" (highest average correlation to the rest) — consistent with
 shocks propagating through the AI supply chain together.
